@@ -11,26 +11,86 @@ document.addEventListener('DOMContentLoaded', () => {
     const secDetail = document.getElementById('section-detail');
     const mainTitle = document.getElementById('main-title');
     
-    function showSection(sectionId) {
-        // Hide all
-        [secSearch, secGrid, secDetail].forEach(sec => {
-            sec.classList.remove('active');
+    const currentProtocol = {
+        protocolId: '230696',
+        valeNumero: '63504027',
+        originalInterno: '26-M-7520',
+        annexInterno: '26-IP-7520',
+        currentProtocolo: '26-M-7520',
+        isAnnex: false,
+        state: 'Finalizado',
+        finalized: true
+    };
+
+    function renderProtocolHeaders() {
+        const protoIntLabel = document.querySelector('.data-proto-int');
+        const protocolIhqLabel = document.querySelector('.data-protocol-ihq');
+
+        if (protoIntLabel) {
+            protoIntLabel.textContent = currentProtocol.originalInterno;
+        }
+
+        if (protocolIhqLabel) {
+            protocolIhqLabel.textContent = currentProtocol.isAnnex ? currentProtocol.annexInterno : 'Pendiente';
+        }
+
+        updateActionButtonsVisibility();
+        updateEditorLock();
+    }
+
+    function updateActionButtonsVisibility() {
+        const btnCreateAnnexInline = document.getElementById('btn-create-annex-inline');
+        const displayVal = currentProtocol.finalized && !currentProtocol.isAnnex ? 'inline-flex' : 'none';
+        if (btnCreateAnnexInline) btnCreateAnnexInline.style.display = displayVal;
+    }
+
+    function updateEditorLock() {
+        const detailSection = document.getElementById('section-detail');
+        const editors = detailSection.querySelectorAll('.wysiwyg-editor');
+        const toolbarButtons = detailSection.querySelectorAll('.tool-btn-wysiwyg, .select-template, .wysiwyg-font-size, .wysiwyg-font-family');
+        const lock = currentProtocol.finalized && !currentProtocol.isAnnex;
+
+        editors.forEach(editor => {
+            editor.setAttribute('contenteditable', lock ? 'false' : 'true');
+            editor.classList.toggle('editor-locked', lock);
         });
-        
-        // Show selected
+
+        toolbarButtons.forEach(btn => {
+            btn.disabled = lock;
+        });
+    }
+
+    function setCurrentProtocolState(state) {
+        currentProtocol.state = state;
+        currentProtocol.finalized = state === 'Finalizado';
+        updateActionButtonsVisibility();
+        updateEditorLock();
+    }
+
+    function showSection(sectionId) {
+        document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
+
         const activeSec = document.getElementById(sectionId);
+        if (!activeSec) {
+            console.error(`Sección ${sectionId} no encontrada en el DOM`);
+            return;
+        }
+
         activeSec.classList.add('active');
-        
-        // Update Title and Layout adjustments
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+
         if (sectionId === 'section-search') {
             mainTitle.innerHTML = 'Inmunohistoquímica <span class="subtitle-breadcrumb">/ Búsqueda</span>';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (sectionId === 'section-grid') {
             mainTitle.innerHTML = 'Inmunohistoquímica <span class="subtitle-breadcrumb">/ Resultados</span>';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (sectionId === 'section-detail') {
             mainTitle.innerHTML = 'Inmunohistoquímica <span class="subtitle-breadcrumb">/ Informe Detallado</span>';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            renderProtocolHeaders();
+        } else if (sectionId === 'section-maestros-ihq') {
+            mainTitle.innerHTML = 'Maestros <span class="subtitle-breadcrumb">/ Inmunohistoquímica</span>';
+            renderMaestrosIHQList();
+        } else if (sectionId === 'section-maestros-ihq-form') {
+            mainTitle.innerHTML = 'Maestros <span class="subtitle-breadcrumb">/ Inmunohistoquímica / Editar Plantilla</span>';
         }
     }
     
@@ -53,18 +113,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
-    // COLLAPSIBLE SUBMENU
-    const submenuTrigger = document.querySelector('.submenu-trigger');
-    const navItemSubmenu = submenuTrigger.parentElement;
-    
-    submenuTrigger.addEventListener('click', (e) => {
-        e.preventDefault();
-        // If sidebar is collapsed, expand it first
-        if (sidebar.classList.contains('collapsed')) {
-            sidebar.classList.remove('collapsed');
-            sidebarToggleBtn.querySelector('i').className = 'fa-solid fa-bars';
-        }
-        navItemSubmenu.classList.toggle('opened');
+    // COLLAPSIBLE SUBMENUS (Búsquedas y Maestros)
+    document.querySelectorAll('.submenu-trigger').forEach(trigger => {
+        trigger.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (sidebar.classList.contains('collapsed')) {
+                sidebar.classList.remove('collapsed');
+                sidebarToggleBtn.querySelector('i').className = 'fa-solid fa-bars';
+            }
+            trigger.parentElement.classList.toggle('opened');
+        });
     });
     
     // TOAST NOTIFICATIONS
@@ -99,6 +157,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputId = document.getElementById('search-id');
     const inputVale = document.getElementById('search-vale');
     const btnClearSearch = document.getElementById('btn-clear-search');
+    const selectEstadoProtocolo = document.getElementById('select-estado-protocolo');
+    
+    if (!searchForm) {
+        console.error('searchForm no encontrado');
+        return;
+    }
     
     searchForm.addEventListener('submit', (e) => {
         e.preventDefault();
@@ -110,27 +174,51 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         
-        // Simulating search process
-        showToast('Buscando en la base de datos de Anatomía Patológica...', 'info');
-        
-        setTimeout(() => {
-            // Apply filtering row match
+        try {
+            // Show brief loading toast
+            showToast('Buscando protocolo...', 'info');
+            
+            // Apply filtering row match immediately
             const filterTerm = valeVal || idVal;
             const gridBody = document.getElementById('grid-results-body');
+            
+            if (!gridBody) {
+                console.error('gridBody no encontrado');
+                showToast('Error: No se pudo localizar la tabla de resultados.', 'error');
+                return;
+            }
+            
             const row = gridBody.querySelector('tr');
+            
+            if (!row) {
+                console.error('row no encontrado');
+                showToast('Error: No hay registros en la tabla.', 'error');
+                return;
+            }
             
             // Check if matches Jimenez record
             if (filterTerm.includes('63504027') || filterTerm.includes('230696') || 'jimenez'.includes(filterTerm.toLowerCase()) || filterTerm === '') {
                 row.style.display = '';
-                document.querySelector('.records-count').innerHTML = '<i class="fa-solid fa-list-ol"></i> Total <strong>1 de 1</strong> registros';
+                const recordsCount = document.querySelector('.records-count');
+                if (recordsCount) {
+                    recordsCount.innerHTML = '<i class="fa-solid fa-list-ol"></i> Total <strong>1 de 1</strong> registros';
+                }
             } else {
                 row.style.display = 'none';
-                document.querySelector('.records-count').innerHTML = '<i class="fa-solid fa-list-ol"></i> Total <strong>0 de 1</strong> registros';
+                const recordsCount = document.querySelector('.records-count');
+                if (recordsCount) {
+                    recordsCount.innerHTML = '<i class="fa-solid fa-list-ol"></i> Total <strong>0 de 1</strong> registros';
+                }
             }
             
+            // Switch to grid section
             showSection('section-grid');
-            showToast('Búsqueda finalizada. Resultados actualizados.', 'success');
-        }, 600);
+            showToast('Búsqueda completada. ' + (row.style.display === 'none' ? 'Sin resultados.' : 'Resultado encontrado.'), 'success');
+            
+        } catch (err) {
+            console.error('Error en búsqueda:', err);
+            showToast('Error al procesar la búsqueda. Revise la consola del navegador.', 'error');
+        }
     });
     
     btnClearSearch.addEventListener('click', () => {
@@ -230,27 +318,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // Templates Content definitions
+    const templatesMacro = {
+        'macro-biopsia': 'Resección quirúrgica irregular, seccionada de 3x2.5x0.7 cm. Superficie externa lisa, pardo-amarillenta. Al corte se reconocen áreas amarillentas sólidas de aspecto granular. Se efectúan cortes representativos para estudio histológico.',
+        'macro-nefrectomia': 'Pieza de nefrectomía radical que mide 12x7x5 cm y pesa 210 g. Cápsula parcialmente adherente. Al corte, a nivel del polo superior, se identifica lesión nodular bien circunscripta de 4x3 cm, de coloración amarillenta y consistencia firme, con áreas de necrosis central. Corteza y médula remanentes conservadas. Grasa perirrenal sin lesiones macroscópicas evidentes.',
+        'macro-empty': ''
+    };
+
     const templatesIHQ = {
         'ihq-std': '<strong>INMUNOHISTOQUÍMICA (Protocolo Estándar):</strong><br>Se reciben secciones histológicas de riñón. Se realizan técnicas de inmunomarcación automatizada para:<br><ul><li>PAX8: Positivo citoplasmático intenso.</li><li>CK7: Positivo membranoso focal.</li><li>CD117: Positivo citoplasmático difuso.</li></ul><br>Los controles internos y externos resultaron positivos y adecuados.',
         'ihq-panel': '<strong>IHQ PANEL ONCOLÓGICO RENAL:</strong><br>El análisis molecular e inmunohistoquímico demuestra:<br>- PAX8: Positivo fuerte (+)<br>- CK7: Positivo moderado (+)<br>- CD117 / c-KIT: Positivo difuso (+)<br>- Vimentina: Negativo (-)<br>- RCC antigen: Negativo (-)<br>Perfil inmunofenotípico consistente con la hipótesis diagnóstica primaria.',
         'ihq-empty': ''
     };
-    
+
     const templatesMicro = {
         'micro-ihq': 'Se confirma parénquima renal que exhibe una proliferación de células epiteliales con citoplasma eosinófilo granular abundante y núcleos redondos regulares sin atipía marcada ni mitosis atípicas. Estroma con presencia de vasos capilares delgados y focos de cicatriz hialina central, coherente con marcaciones.',
         'micro-normal': 'Los cortes histológicos muestran parénquima renal maduro con glomérulos de tamaño y celularidad conservados. Membrana basal glomerular delgada. Túbulos contorneados proximales y distales con epitelio conservado. No se observan atipías celulares ni infiltrados inflamatorios significativos.',
         'micro-empty': ''
     };
-    
+
     const templatesDiag = {
         'diag-oncocitoma': '<strong>DIAGNÓSTICO:</strong><br>Los hallazgos histopatológicos y el perfil de inmunohistoquímica (PAX8+, CK7+ focal, CD117+) son compatibles con:<br><h2>ONCOCITOMA RENAL</h2><br>Margen de resección quirúrgica libre de lesión neoplásica.',
         'diag-carcinoma': '<strong>DIAGNÓSTICO:</strong><br>Los hallazgos histopatológicos y el perfil inmunohistoquímico son altamente sugestivos de:<br><h2>CARCINOMA RENAL DE CÉLULAS CROMÓFOBAS</h2><br><em>(Variante eosinofílica)</em><br>Se sugiere correlación con estudios de extensión clínica.',
         'diag-empty': ''
     };
-    
-    setupTemplateLoader('template-ihq', 'btn-select-ihq', 'editor-ihq', templatesIHQ);
+
+    setupTemplateLoader('template-macro', 'btn-select-macro', 'editor-macro', templatesMacro);
+    setupTemplateLoader('template-ihq',   'btn-select-ihq',   'editor-ihq',   templatesIHQ);
     setupTemplateLoader('template-micro', 'btn-select-micro', 'editor-micro', templatesMicro);
-    setupTemplateLoader('template-diag', 'btn-select-diag', 'editor-diag', templatesDiag);
+    setupTemplateLoader('template-diag',  'btn-select-diag',  'editor-diag',  templatesDiag);
     
     // RICH TEXT EDITOR WYSIWYG COMMANDS
     const toolButtons = document.querySelectorAll('.tool-btn-wysiwyg');
@@ -374,34 +469,34 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // FULL PRINT PROTOCOL BUTTON
     document.getElementById('btn-print-full').addEventListener('click', () => {
-        showToast('Generando vista de impresión del protocolo de Inmunohistoquímica...', 'info');
-        
-        const ihqText = document.getElementById('editor-ihq').innerHTML;
+        showToast('Generando vista de impresión del protocolo...', 'info');
+
+        const macroText = document.getElementById('editor-macro').innerHTML;
         const microText = document.getElementById('editor-micro').innerHTML;
-        const diagText = document.getElementById('editor-diag').innerHTML;
-        const obsText = document.getElementById('editor-obs').innerHTML;
+        const ihqText   = document.getElementById('editor-ihq').innerHTML;
+        const diagText  = document.getElementById('editor-diag').innerHTML;
         const estadoText = document.getElementById('select-estado-protocolo').value;
-        
+
         const printWindow = window.open('', '_blank');
         printWindow.document.write(`
             <html>
             <head>
-                <title>Protocolo de Inmunohistoquímica - Sanatorio Güemes</title>
+                <title>Protocolo - Sanatorio Güemes</title>
                 <style>
                     body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 40px; color: #222; }
                     .print-container { max-width: 800px; margin: 0 auto; }
-                    .print-header { border-bottom: 2px solid #00adb5; padding-bottom: 15px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
+                    .print-header { border-bottom: 2px solid #00adb5; padding-bottom: 15px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-start; }
                     .print-logo h1 { font-size: 20px; font-weight: bold; margin: 0; color: #00adb5; }
                     .print-logo span { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1px; }
-                    .print-date { font-size: 12px; color: #666; }
-                    .patient-box { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 15px; border-radius: 6px; margin-bottom: 30px; }
-                    .patient-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px; }
-                    .patient-grid div span { font-weight: bold; }
-                    .report-section { margin-bottom: 25px; }
-                    .section-title { font-size: 13px; font-weight: bold; color: #00adb5; border-bottom: 1px dashed #cbd5e1; padding-bottom: 4px; margin-bottom: 10px; text-transform: uppercase; }
-                    .section-content { font-size: 13px; line-height: 1.6; white-space: normal; }
-                    .footer-signature { margin-top: 50px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 40px; font-size: 12px; text-align: center; }
+                    .print-meta { font-size: 12px; color: #444; text-align: right; line-height: 1.8; }
+                    .patient-box { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 15px; border-radius: 6px; margin-bottom: 24px; font-size: 13px; }
+                    .patient-box strong { color: #c00; }
+                    .report-section { margin-bottom: 22px; page-break-inside: avoid; }
+                    .section-title { font-size: 12px; font-weight: bold; color: #00adb5; border-bottom: 1px dashed #cbd5e1; padding-bottom: 4px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+                    .section-content { font-size: 13px; line-height: 1.65; }
+                    .footer-signature { margin-top: 60px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 40px; font-size: 12px; text-align: center; }
                     .sig-line { border-top: 1px solid #aaa; padding-top: 5px; margin-top: 50px; }
+                    .estado-bar { font-size: 11px; color: #666; margin-top: 18px; padding-top: 10px; border-top: 1px solid #e2e8f0; }
                 </style>
             </head>
             <body>
@@ -411,42 +506,42 @@ document.addEventListener('DOMContentLoaded', () => {
                             <h1>SANATORIO GÜEMES</h1>
                             <span>Anatomía Patológica</span>
                         </div>
-                        <div class="print-date">Protocolo Int: <strong>26-M-7520 / 7520</strong></div>
-                    </div>
-                    
-                    <div class="patient-box">
-                        <div class="patient-grid">
-                            <div><span>Paciente:</span> JIMENEZ DEL TORO JOSE ANTONIO</div>
-                            <div><span>Nro. de Vale:</span> 63504027</div>
-                            <div><span>Fecha de Recepción:</span> 2026-06-11 11:06</div>
-                            <div><span>Material:</span> BIOPSIA (RIÑON)</div>
+                        <div class="print-meta">
+                            Protocolo Int: <strong>${currentProtocol.currentProtocolo}</strong><br>
+                            Nro. de Vale: 63504027<br>
+                            Fecha de Recepción: 2026-06-11 11:06<br>
+                            Material: BIOPSIA (RIÑON)
                         </div>
                     </div>
-                    
-                    <div class="report-section">
-                        <div class="section-title">Inmunohistoquímica</div>
-                        <div class="section-content">${ihqText}</div>
+
+                    <div class="patient-box">
+                        <strong>JIMENEZ DEL TORO JOSE ANTONIO</strong> &nbsp;|&nbsp; H.C.: 3628850-4 &nbsp;|&nbsp; Edad: 70 años
                     </div>
-                    
+
+                    <div class="report-section">
+                        <div class="section-title">Macroscopía</div>
+                        <div class="section-content">${macroText}</div>
+                    </div>
+
                     <div class="report-section">
                         <div class="section-title">Microscopía</div>
                         <div class="section-content">${microText}</div>
                     </div>
-                    
+
+                    <div class="report-section">
+                        <div class="section-title">Inmunohistoquímica</div>
+                        <div class="section-content">${ihqText || '<i>Sin datos de inmunohistoquímica registrados</i>'}</div>
+                    </div>
+
                     <div class="report-section">
                         <div class="section-title">Diagnóstico</div>
                         <div class="section-content">${diagText || '<i>Sin diagnóstico definitivo registrado</i>'}</div>
                     </div>
-                    
-                    <div class="report-section">
-                        <div class="section-title">Observaciones</div>
-                        <div class="section-content">${obsText}</div>
-                    </div>
-                    
-                    <div style="font-size: 12px; margin-top: 20px; color: #555;">
+
+                    <div class="estado-bar">
                         Estado del Informe: <strong>${estadoText.toUpperCase()}</strong>
                     </div>
-                    
+
                     <div class="footer-signature">
                         <div>
                             <div class="sig-line">
@@ -462,7 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </div>
                 </div>
-                <script>window.onload = function() { window.print(); window.close(); }</script>
+                <script>window.onload = function() { window.print(); window.close(); }<\/script>
             </body>
             </html>
         `);
@@ -476,9 +571,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnModalCancel = document.getElementById('btn-modal-cancel');
     const btnModalConfirm = document.getElementById('btn-modal-confirm');
     const modalSummaryEstado = document.getElementById('modal-summary-estado');
-    const selectEstadoProtocolo = document.getElementById('select-estado-protocolo');
     
     btnSaveChanges.addEventListener('click', () => {
+        if (currentProtocol.finalized && !currentProtocol.isAnnex) {
+            showToast('El protocolo ya está finalizado. Cree un anexo / nuevo control para continuar sin modificar el informe original.', 'error');
+            return;
+        }
+
         // Update modal summary with selected state
         modalSummaryEstado.textContent = selectEstadoProtocolo.options[selectEstadoProtocolo.selectedIndex].text;
         
@@ -486,6 +585,28 @@ document.addEventListener('DOMContentLoaded', () => {
         saveModal.classList.add('active');
     });
     
+    // Inline annex button located beneath "Protocolo IHQ / Anexo"
+    const btnCreateAnnexInline = document.getElementById('btn-create-annex-inline');
+    if (btnCreateAnnexInline) {
+        btnCreateAnnexInline.addEventListener('click', () => {
+            const confirmed = confirm('¿Está seguro que desea crear el anexo IP para este protocolo?');
+            if (!confirmed) return;
+
+            currentProtocol.isAnnex = true;
+            currentProtocol.currentProtocolo = currentProtocol.annexInterno;
+            currentProtocol.state = 'Inmunohistoquimica';
+            currentProtocol.finalized = false;
+            const sel = document.getElementById('select-estado-protocolo');
+            if (sel) sel.value = 'Inmunohistoquimica';
+            renderProtocolHeaders();
+            showToast('Anexo creado desde botón inline.', 'success');
+        });
+    }
+
+    selectEstadoProtocolo.addEventListener('change', (e) => {
+        setCurrentProtocolState(e.target.value);
+    });
+
     function closeModal() {
         saveModal.classList.remove('active');
     }
@@ -515,11 +636,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 lbl.textContent = newDateString;
             });
             
+            // Update current protocol state from selected status
+            currentProtocol.finalized = selectEstadoProtocolo.value === 'Finalizado';
+            currentProtocol.state = selectEstadoProtocolo.value;
+            renderProtocolHeaders();
+            
             // Update grid values
             const gridRow = document.querySelector('.interactive-row');
             const statusCell = gridRow.querySelector('.badge-status-micro');
-            
-            statusCell.textContent = selectEstadoProtocolo.options[selectEstadoProtocolo.selectedIndex].text;
+            if (statusCell) {
+                statusCell.textContent = selectEstadoProtocolo.options[selectEstadoProtocolo.selectedIndex].text;
+            }
             
             // Redirect back to grid
             showSection('section-grid');
@@ -546,6 +673,113 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     
+    // =============================================
+    // MAESTROS IHQ - DATOS Y LÓGICA
+    // =============================================
+
+    let maestrosIHQData = [
+        { id: 1,  titulo: 'ADENOCA ACINAR PROSTATA',           contenido: 'Las secciones histológicas muestran fragmentos de tejido prostático que exhibe focos de una proliferación neoplásica infiltrante con moderado pleomorfismo nuclear, nucléolos evidentes, que se disponen en estructuras glandulares rígidas, algunas anastomosadas entre sí, y otras de manera difusa.' },
+        { id: 2,  titulo: 'ADENOCARCINOMA COLON',              contenido: 'Se observan secciones de colon con proliferación glandular neoplásica de patrón tubular irregular, con células de núcleo hipercromático y pleomórfico, disposición pseudoestratificada, y variable producción de mucina.' },
+        { id: 3,  titulo: 'ADENOMA CORTICAL ADRENAL',          contenido: 'Proliferación celular bien delimitada de células corticales adrenales con citoplasma claro/eosinófilo, núcleos regulares sin atipías significativas ni actividad mitótica relevante. Compatible con adenoma adrenocortical.' },
+        { id: 4,  titulo: 'ADENOMA FOLICULAR DE TIROIDES',     contenido: 'Nódulo tiroideo encapsulado constituido por folículos de tamaño variable tapizados por células con escaso pleomorfismo nuclear. Sin invasión capsular ni vascular identificada.' },
+        { id: 5,  titulo: 'CARCINOMA DE CÉLULAS CLARAS RENAL', contenido: 'Proliferación neoplásica de células poligonales con citoplasma claro abundante y núcleos ISUP grado 2, dispuestas en nidos sólidos con red vascular fina. IHQ: PAX8+, CD10+, RCC+, CK7-, TFE3-.' },
+        { id: 6,  titulo: 'CARCINOMA LOBULILLAR MAMA',         contenido: 'Infiltración difusa del parénquima mamario por células tumorales pequeñas a medianas, dispuestas en fila india con escasa cohesión. IHQ: RE+, RP+, HER2-, E-cadherina negativo.' },
+        { id: 7,  titulo: 'LINFOMA DIFUSO CÉLULAS B GRANDES',  contenido: 'Proliferación linfoide difusa de células grandes con núcleos vesiculosos, nucléolos prominentes y frecuentes mitosis. IHQ: CD20+, CD3-, PAX5+, BCL2+, BCL6+, Ki67 &gt; 70%.' },
+        { id: 8,  titulo: 'MELANOMA MALIGNO',                  contenido: 'Nidos y células tumorales epitelioides con marcado pleomorfismo, nucléolos prominentes y pigmento melánico intracitoplásmico. IHQ: HMB45+, Melan-A+, S100+, SOX10+.' },
+        { id: 9,  titulo: 'ONCOCITOMA RENAL',                  contenido: 'Proliferación de células eosinófilas granulares con núcleos regulares sin atipías significativas, dispuestas en nidos sólidos y arquitectura tubuloquística. IHQ: PAX8+, CK7 focal, CD117+, vimentina-.' },
+    ];
+    let maestrosNextId = 10;
+    let maestrosEditingId = null;
+
+    function renderMaestrosIHQList(filterText) {
+        const tbody = document.getElementById('maestros-ihq-body');
+        const countEl = document.getElementById('maestros-count-text');
+        const query = (filterText || document.getElementById('maestros-filter').value || '').toLowerCase().trim();
+
+        const filtered = maestrosIHQData.filter(item =>
+            !query || item.titulo.toLowerCase().includes(query)
+        );
+
+        tbody.innerHTML = '';
+        filtered.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.className = 'interactive-row';
+            tr.innerHTML = `
+                <td class="cell-bold">${item.id}</td>
+                <td>${item.titulo}</td>
+                <td class="col-center">
+                    <button class="btn-action-note btn-edit-maestro" data-id="${item.id}" title="Modificar plantilla">
+                        <i class="fa-regular fa-pen-to-square"></i>
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        countEl.textContent = `${filtered.length} de ${maestrosIHQData.length}`;
+
+        tbody.querySelectorAll('.btn-edit-maestro').forEach(btn => {
+            btn.addEventListener('click', () => {
+                openMaestrosForm(parseInt(btn.getAttribute('data-id')));
+            });
+        });
+    }
+
+    function openMaestrosForm(id) {
+        maestrosEditingId = id || null;
+        const tituloInput = document.getElementById('maestros-titulo');
+        const editor = document.getElementById('editor-maestros');
+
+        if (id) {
+            const item = maestrosIHQData.find(m => m.id === id);
+            if (item) {
+                tituloInput.value = item.titulo;
+                editor.innerHTML = item.contenido;
+            }
+        } else {
+            tituloInput.value = '';
+            editor.innerHTML = '';
+        }
+
+        showSection('section-maestros-ihq-form');
+    }
+
+    document.getElementById('maestros-filter').addEventListener('input', (e) => {
+        renderMaestrosIHQList(e.target.value);
+    });
+
+    document.getElementById('btn-maestros-nuevo').addEventListener('click', () => {
+        openMaestrosForm(null);
+    });
+
+    document.getElementById('btn-maestros-guardar').addEventListener('click', () => {
+        const titulo = document.getElementById('maestros-titulo').value.trim();
+        const contenido = document.getElementById('editor-maestros').innerHTML.trim();
+
+        if (!titulo) {
+            showToast('Por favor, ingrese un título para la plantilla.', 'error');
+            return;
+        }
+
+        if (maestrosEditingId) {
+            const idx = maestrosIHQData.findIndex(m => m.id === maestrosEditingId);
+            if (idx >= 0) {
+                maestrosIHQData[idx].titulo = titulo.toUpperCase();
+                maestrosIHQData[idx].contenido = contenido;
+            }
+            showToast('Plantilla actualizada exitosamente.', 'success');
+        } else {
+            maestrosIHQData.push({ id: maestrosNextId++, titulo: titulo.toUpperCase(), contenido });
+            showToast('Plantilla creada exitosamente.', 'success');
+        }
+
+        showSection('section-maestros-ihq');
+    });
+
+    document.getElementById('btn-maestros-cancelar').addEventListener('click', () => {
+        showSection('section-maestros-ihq');
+    });
+
     // SIDEBAR INTERACTIVE CLICKS
     document.getElementById('nav-inicio').addEventListener('click', (e) => {
         e.preventDefault();
@@ -556,6 +790,16 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('nav-recepcion').addEventListener('click', (e) => {
         e.preventDefault();
         showToast('Redireccionando a Recepción de Material...', 'info');
+    });
+
+    document.getElementById('nav-biopsias').addEventListener('click', (e) => {
+        e.preventDefault();
+        showToast('Módulo Biopsias y Líquidos - Pendientes en desarrollo.', 'info');
+    });
+
+    document.getElementById('nav-pap').addEventListener('click', (e) => {
+        e.preventDefault();
+        showToast('Módulo Pap - Pendientes en desarrollo.', 'info');
     });
     
     document.getElementById('sub-pacientes').addEventListener('click', (e) => {
@@ -582,7 +826,12 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         showToast('Módulo de Adjuntos no habilitado en este prototipo.', 'info');
     });
-    
+
+    document.getElementById('sub-maestros-ihq').addEventListener('click', (e) => {
+        e.preventDefault();
+        showSection('section-maestros-ihq');
+    });
+
     document.getElementById('nav-salir').addEventListener('click', (e) => {
         e.preventDefault();
         if (confirm('¿Desea cerrar la sesión actual en el sistema de Anatomía Patológica?')) {
